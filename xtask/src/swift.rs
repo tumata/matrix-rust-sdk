@@ -69,12 +69,6 @@ enum SwiftCommand {
         /// default values provided by the Rust and Xcode toolchains.
         #[clap(long)]
         watchos_deployment_target: Option<String>,
-
-        /// Build the targets one by one instead of passing all of them to cargo
-        /// in one go, which makes it hang on lesser devices like plain Apple
-        /// Silicon M1s
-        #[clap(long)]
-        sequentially: bool,
     },
 }
 
@@ -94,7 +88,6 @@ impl SwiftArgs {
                 macos_deployment_target,
                 ios_deployment_target,
                 watchos_deployment_target,
-                sequentially,
             } => {
                 // The dev profile seems to cause crashes on some platforms so
                 // we default to reldbg
@@ -106,7 +99,6 @@ impl SwiftArgs {
                     targets,
                     tier3_targets,
                     components_path,
-                    sequentially,
                     macos_deployment_target.as_deref(),
                     ios_deployment_target.as_deref(),
                     watchos_deployment_target.as_deref(),
@@ -290,7 +282,6 @@ fn build_xcframework(
     targets: Option<Vec<String>>,
     tier3_targets: bool,
     components_path: Option<Utf8PathBuf>,
-    sequentially: bool,
     macos_deployment_target: Option<&str>,
     ios_deployment_target: Option<&str>,
     watchos_deployment_target: Option<&str>,
@@ -326,7 +317,6 @@ fn build_xcframework(
     let platform_build_paths = build_targets(
         targets,
         profile,
-        sequentially,
         macos_deployment_target,
         ios_deployment_target,
         watchos_deployment_target,
@@ -395,10 +385,16 @@ fn build_xcframework(
 }
 
 /// Builds the SDK for the specified targets and profile.
+///
+/// `matrix-sdk-ffi` declares the `cdylib`, `staticlib` and `lib` crate types,
+/// but Apple platforms only use the static library. Cargo doesn't apply the
+/// profile's LTO setting to a static library built together with an `rlib`, so
+/// it is built on its own with `cargo rustc --crate-type staticlib`, which also
+/// skips linking the unused dynamic library. `cargo rustc` only accepts a crate
+/// type for a single target, so the targets are built one after the other.
 fn build_targets(
     targets: Vec<&Target>,
     profile: &str,
-    sequentially: bool,
     macos_deployment_target: Option<&str>,
     ios_deployment_target: Option<&str>,
     watchos_deployment_target: Option<&str>,
@@ -418,45 +414,16 @@ fn build_targets(
     let _env_guard5 =
         watchos_deployment_target.map(|target| sh.push_env("WATCHOS_DEPLOYMENT_TARGET", target));
 
-    if sequentially {
-        for target in &targets {
-            let triple = target.triple;
+    for target in &targets {
+        let triple = target.triple;
 
-            println!("-- Building for {}", target.description);
-            if target.status == TargetStatus::TopTier {
-                cmd!(sh, "rustup run stable cargo build -p matrix-sdk-ffi --target {triple} --profile {profile} --features {FFI_FEATURES}")
-                    .run()?;
-            } else {
-                cmd!(sh, "rustup run nightly cargo build -p matrix-sdk-ffi -Zbuild-std --target {triple} --profile {profile} --features {FFI_FEATURES}")
-                    .run()?;
-            }
-        }
-    } else {
-        let (stable_targets, tier3_targets): (Vec<&Target>, Vec<&Target>) =
-            targets.iter().partition(|t| t.status == TargetStatus::TopTier);
-
-        if !stable_targets.is_empty() {
-            let triples = stable_targets.iter().map(|target| target.triple).collect::<Vec<_>>();
-            let mut cmd = cmd!(sh, "rustup run stable cargo build -p matrix-sdk-ffi");
-            for triple in &triples {
-                cmd = cmd.arg("--target").arg(triple);
-            }
-            cmd = cmd.arg("--profile").arg(profile).arg("--features").arg(FFI_FEATURES);
-
-            println!("-- Building for {} targets", triples.len());
-            cmd.run()?;
-        }
-
-        if !tier3_targets.is_empty() {
-            let triples = tier3_targets.iter().map(|target| target.triple).collect::<Vec<_>>();
-            let mut cmd = cmd!(sh, "rustup run nightly cargo build -p matrix-sdk-ffi -Zbuild-std");
-            for triple in &triples {
-                cmd = cmd.arg("--target").arg(triple);
-            }
-            cmd = cmd.arg("--profile").arg(profile).arg("--features").arg(FFI_FEATURES);
-
-            println!("-- Building for {} targets with nightly -Zbuild-std", triples.len());
-            cmd.run()?;
+        println!("-- Building for {}", target.description);
+        if target.status == TargetStatus::TopTier {
+            cmd!(sh, "rustup run stable cargo rustc -p matrix-sdk-ffi --lib --crate-type staticlib --target {triple} --profile {profile} --features {FFI_FEATURES}")
+                .run()?;
+        } else {
+            cmd!(sh, "rustup run nightly cargo rustc -p matrix-sdk-ffi --lib --crate-type staticlib -Zbuild-std --target {triple} --profile {profile} --features {FFI_FEATURES}")
+                .run()?;
         }
     }
 

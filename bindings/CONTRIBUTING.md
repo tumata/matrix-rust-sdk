@@ -74,10 +74,13 @@ The profiles themselves are defined in the workspace
 Release builds don't use the builtin `release` profile, since optimising for
 size rather than speed shrinks the shipped binaries considerably:
 
-- iOS uses `small-release`, which is `release` with `opt-level = "s"`. That
-  measured ~33% smaller linked code for the distributed XCFramework, see
-  [#6714](https://github.com/matrix-org/matrix-rust-sdk/pull/6714).
-  `cargo xtask swift build-framework --release` selects it.
+- iOS uses `small-release`, which is `release` with `opt-level = "s"` and
+  `lto = true`. `opt-level = "s"` measured ~33% smaller linked code for the
+  distributed XCFramework, see
+  [#6714](https://github.com/matrix-org/matrix-rust-sdk/pull/6714), and LTO
+  another ~26% to ~43%. `cargo xtask swift build-framework --release` selects
+  it, and builds only the static library for each target, since Cargo skips
+  LTO for a static library built alongside an `rlib`.
 - Android uses `small-release-stripped`, which adds `lto = true` and
   `strip = "debuginfo"` on top of `small-release`, almost halving the size of
   the resulting library. Backtraces still work but debuggers are affected. Pass

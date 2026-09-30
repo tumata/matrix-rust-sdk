@@ -226,10 +226,13 @@ debug = "line-tables-only"
 opt-level = 3
 
 # Profile for the distributed Apple framework. `opt-level = "s"` measured ~33%
-# smaller linked code than `release`.
+# smaller linked code than `release`. LTO internalises every symbol that isn't
+# part of the FFI, so that consumers can dead strip them, and shrinks the linked
+# code by another ~26% to ~43%, depending on how the library is linked.
 [profile.small-release]
 inherits = "release"
 opt-level = "s"
+lto = true
 
 # This is the same as `small-release`, but it also strips debug symbols.
 [profile.small-release-stripped]
